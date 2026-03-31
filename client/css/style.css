@@ -1,0 +1,132 @@
+/* Minimal custom styles - Tailwind handles the rest */
+
+/* Hide sidebar scrollbar but keep scroll functionality */
+aside .overflow-y-auto,
+.chat-scroll {
+  scrollbar-width: none;          /* Firefox */
+  -ms-overflow-style: none;       /* IE/Edge */
+}
+
+aside .overflow-y-auto::-webkit-scrollbar,
+.chat-scroll::-webkit-scrollbar {
+  display: none;                  /* Chrome/Safari */
+}
+
+/* Chat messages */
+.chat-msg {
+  max-width: 100%;
+  word-wrap: break-word;
+}
+
+.chat-msg-user {
+  background: hsl(240 3.7% 15.9%);
+  border-radius: 8px 8px 2px 8px;
+  padding: 6px 10px;
+  margin-left: 20px;
+}
+
+.chat-msg-bot {
+  background: hsl(270 50% 20% / 0.3);
+  border: 1px solid hsl(270 50% 30% / 0.3);
+  border-radius: 8px 8px 8px 2px;
+  padding: 6px 10px;
+  margin-right: 20px;
+}
+
+.chat-msg-error {
+  background: hsl(0 50% 20% / 0.3);
+  border: 1px solid hsl(0 50% 30% / 0.3);
+}
+
+.chat-suggestion:hover {
+  text-decoration: underline;
+}
+
+/* Chat pre-formatted output */
+.chat-msg-bot pre {
+  font-size: 10px;
+  white-space: pre-wrap;
+  margin-top: 4px;
+  opacity: 0.8;
+}
+
+/* Canvas active state */
+.screen-canvas.active {
+  display: block !important;
+}
+
+/* Status dot animations */
+#status-dot.connected {
+  background: #4ade80;
+  box-shadow: 0 0 6px #4ade80;
+}
+
+#status-dot.streaming {
+  background: #10b981;
+  box-shadow: 0 0 8px #10b981;
+  animation: pulse-dot 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}
+
+@keyframes pulse-dot {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
+}
+
+/* Mode selector disabled state */
+.mode-option:has(input:disabled) {
+  opacity: 0.3;
+  cursor: not-allowed;
+}
+
+/* Button active press effect */
+.btn-key:active {
+  background: hsl(142 76% 36%);
+  color: white;
+  border-color: hsl(142 76% 36%);
+}
+
+/* WiFi status messages */
+#wifi-status.success {
+  color: #4ade80;
+}
+
+#wifi-status.error {
+  color: #f87171;
+}
+
+/* Select dropdown fix for dark mode */
+select option {
+  background: hsl(240 10% 3.9%);
+  color: hsl(0 0% 98%);
+}
+
+/* Focus ring override */
+*:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px hsl(240 10% 3.9%), 0 0 0 4px hsl(240 4.9% 83.9% / 0.3);
+}
+
+/* Number input spinner removal */
+input[type="number"]::-webkit-inner-spin-button,
+input[type="number"]::-webkit-outer-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+input[type="number"] {
+  -moz-appearance: textfield;
+}
+
+/* Responsive */
+@media (max-width: 768px) {
+  aside {
+    width: 100% !important;
+    min-width: 100% !important;
+    max-height: 40vh;
+    border-right: none !important;
+    border-bottom: 1px solid hsl(240 3.7% 15.9%);
+  }
+
+  .flex.h-screen {
+    flex-direction: column;
+  }
+}

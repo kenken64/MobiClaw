@@ -1,0 +1,213 @@
+# MobiClaw
+
+> AI-powered Android phone control from your browser. Mirror your screen, tap, swipe, and give natural language commands -- the AI reads the screen, thinks, and acts.
+
+## How It Works
+
+```
+You type: "open youtube and search for lofi music"
+
+Agent: Step 1 -> reads screen -> thinks -> taps YouTube icon
+Agent: Step 2 -> reads screen -> thinks -> taps search bar
+Agent: Step 3 -> reads screen -> thinks -> types "lofi music"
+Agent: Step 4 -> reads screen -> thinks -> presses enter
+Agent: Step 5 -> reads screen -> "done!"
+
+All automatic. No human interaction needed.
+```
+
+The AI agent uses a **perception -> reasoning -> action** loop:
+
+```
+                    +-------------------------------------------+
+                    |            your goal                       |
+                    |  "open settings and turn on wifi"          |
+                    +-------------------+-----------------------+
+                                        |
+                                        v
+                    +-------------------------------------------+
+                    |                                           |
+                    |          1. PERCEIVE                      |
+                    |   - dump accessibility tree via ADB       |
+                    |   - capture screenshot                    |
+                    |   - detect foreground app                 |
+                    |   - discard stale elements                |
+                    |                                           |
+                    |          2. REASON                        |
+                    |   - send screen + goal to LLM             |
+                    |   - LLM returns action as JSON            |
+                    |   - "I see the WiFi toggle, tapping it"   |
+                    |                                           |
+                    |          3. ACT                           |
+                    |   - execute via ADB: tap, type, swipe     |
+                    |   - check if goal is done                 |
+                    |   - loop back to perceive                 |
+                    |                                           |
+                    +-------------------------------------------+
+```
+
+## Features
+
+- **Screen Mirroring** - 3 modes: H.264 (scrcpy, 30fps), WebRTC (DataChannel), PNG (screencap)
+- **AI Agent** - Natural language phone control with perceive-reason-act loop
+- **Multi-LLM** - Google Gemini, OpenAI GPT, Anthropic Claude (auto-detects from .env)
+- **Vision** - Screenshots sent to LLM for visual understanding of the screen
+- **Touch Control** - Click-to-tap, drag-to-swipe, scroll wheel from the browser
+- **Navigation** - Back, Home, Recent, Volume, Power buttons
+- **Wireless ADB** - Connect and pair devices from the browser UI
+- **Auto-Reconnect** - Stream auto-restarts on disconnect
+- **Direct Commands** - `/swipe up`, `/open settings`, `/help` with `/` prefix
+- **Stale Detection** - Discards stale accessibility data, falls back to screenshot-only
+- **Professional UI** - Tailwind CSS + Lucide icons, shadcn-inspired dark theme
+
+## Quick Start
+
+### Prerequisites
+
+- [Node.js](https://nodejs.org/) v18+
+- [ADB (Android Platform Tools)](https://developer.android.com/tools/releases/platform-tools)
+- An Android device with USB Debugging enabled
+- An API key for one of: Google Gemini, OpenAI, or Anthropic (for AI agent)
+
+### Install
+
+```bash
+git clone https://github.com/kenken64/MobiClaw.git
+cd MobiClaw
+npm install
+```
+
+### Configure
+
+Copy `.env.example` to `.env` and set your API key:
+
+```bash
+cp .env.example .env
+```
+
+```env
+PORT=3000
+ADB_PATH=D:\platform-tools\adb.exe
+
+# Set ONE of these (priority: Gemini > OpenAI > Anthropic):
+GEMINI_API_KEY=your-key-here
+# OPENAI_API_KEY=sk-...
+# ANTHROPIC_API_KEY=sk-ant-...
+```
+
+### Run
+
+```bash
+# Connect your Android device via USB (with USB debugging enabled)
+npm start
+```
+
+Open **http://localhost:3000** in Chrome/Edge.
+
+## Usage
+
+### Screen Mirroring
+
+1. Select your device from the dropdown
+2. Choose a mode: **H.264** (recommended), WebRTC, or PNG
+3. Click **Start Mirror**
+4. Click/drag on the screen to tap/swipe the phone
+
+### AI Agent
+
+Type a natural language goal in the chat panel on the right:
+
+- `open youtube and search for lofi music`
+- `go to settings and check battery percentage`
+- `open chrome and search for weather today`
+- `what do you see on the mobile screen?`
+
+The agent reads the screen (accessibility tree + screenshot), sends it to the LLM, and executes the returned action. It loops until the goal is achieved or max steps reached.
+
+### Direct Commands
+
+Prefix with `/` for instant commands without AI:
+
+| Command | Example |
+|---------|---------|
+| `/open [app]` | `/open settings`, `/open chrome` |
+| `/type [text]` | `/type hello world` |
+| `/tap [x] [y]` | `/tap 500 300`, `/tap center` |
+| `/swipe [dir]` | `/swipe up`, `/swipe left` |
+| `/press [key]` | `/press home`, `/press back` |
+| `/screenshot` | Take a screenshot |
+| `/help` | Show all commands |
+
+## Supported LLM Providers
+
+| Provider | Model | Best For | Env Variable |
+|----------|-------|----------|-------------|
+| **Google Gemini** | gemini-2.5-flash | Android UI (Google makes Android), fast, cheap | `GEMINI_API_KEY` |
+| **OpenAI** | gpt-4o / gpt-5.4 | General vision tasks | `OPENAI_API_KEY` |
+| **Anthropic** | claude-sonnet-4 | Structured reasoning | `ANTHROPIC_API_KEY` |
+
+## Configuration
+
+All settings in `.env`:
+
+```env
+PORT=3000                           # Web server port
+ADB_PATH=D:\platform-tools\adb.exe  # Path to ADB (auto-detected if not set)
+
+# AI Provider (set one)
+GEMINI_API_KEY=...
+GEMINI_MODEL=gemini-2.5-flash       # default
+
+OPENAI_API_KEY=sk-...
+OPENAI_MODEL=gpt-4o                 # default
+
+ANTHROPIC_API_KEY=sk-ant-...
+ANTHROPIC_MODEL=claude-sonnet-4-20250514
+
+# Scrcpy streaming
+SCRCPY_MAX_SIZE=800                  # Max screen dimension
+SCRCPY_BITRATE=2000000              # Video bitrate (2Mbps)
+SCRCPY_MAX_FPS=30                   # Max frames per second
+```
+
+## Architecture
+
+```
+server/
+  index.js              # Express + WebSocket server
+  config.js             # Config with ADB auto-detection
+  adb/                  # ADB connection, device info
+  stream/               # screencap + scrcpy H.264 providers
+  input/                # Touch/key input (shell + scrcpy binary protocol)
+  ws/                   # WebSocket message routing
+  webrtc/               # WebRTC DataChannel transport
+  chat/
+    agent.js            # AI agent (perceive -> reason -> act loop)
+    perception.js       # Screen reader (uiautomator + screencap)
+    command-handler.js  # Direct /command parser
+
+client/
+  index.html            # Tailwind UI (3-panel layout)
+  js/app.js             # Main app + chat handler
+  js/renderers/         # PNG, H.264 (WebCodecs), WebRTC renderers
+  js/input/             # Touch/mouse event handler
+```
+
+## Known Limitations
+
+- **Android 16** revokes screen capture every ~5 seconds (OS security feature). Auto-reconnect handles this, but there's a brief gap. A companion Android app with MediaProjection permission would fix this permanently.
+- **uiautomator** can return stale accessibility data on Android 16. MobiClaw detects this by comparing the foreground app with element packages and falls back to screenshot-only mode.
+- **Gemini free tier** has rate limits (20 req/day). The agent auto-retries after the cooldown period.
+
+## Tech Stack
+
+- **Backend**: Node.js, Express, ws, werift
+- **ADB**: @devicefarmer/adbkit + CLI
+- **Streaming**: scrcpy-server v3.3.4
+- **AI**: @google/genai, openai, @anthropic-ai/sdk
+- **Frontend**: Tailwind CSS, Lucide Icons, WebCodecs API
+- **Screen Perception**: Android uiautomator + screencap
+
+## License
+
+MIT

@@ -1,0 +1,23 @@
+{
+  "name": "android-dev-web",
+  "version": "1.0.0",
+  "description": "Web-based Android device screen mirror and control via ADB",
+  "type": "module",
+  "main": "server/index.js",
+  "scripts": {
+    "start": "node server/index.js",
+    "dev": "node --watch server/index.js",
+    "download-scrcpy": "node scripts/download-scrcpy-server.js",
+    "postinstall": "node scripts/download-scrcpy-server.js"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.80.0",
+    "@devicefarmer/adbkit": "^3.3.8",
+    "@google/genai": "^1.47.0",
+    "dotenv": "^16.4.7",
+    "express": "^5.1.0",
+    "openai": "^6.33.0",
+    "werift": "^0.22.9",
+    "ws": "^8.18.1"
+  }
+}
