@@ -43,6 +43,10 @@ app.post('/api/config', (req, res) => {
 
     // Ollama: no API key needed
     if (provider === 'ollama') {
+      // Clear other providers
+      delete process.env.GEMINI_API_KEY;
+      delete process.env.OPENAI_API_KEY;
+      delete process.env.ANTHROPIC_API_KEY;
       process.env.OLLAMA_MODEL = model || 'qwen2.5vl:72b';
       process.env.OLLAMA_BASE_URL = baseUrl || 'http://localhost:11434';
       console.log(`[Config] ollama config updated in memory (model: ${process.env.OLLAMA_MODEL}, url: ${process.env.OLLAMA_BASE_URL})`);
@@ -61,6 +65,13 @@ app.post('/api/config', (req, res) => {
     if (!keyToUse) {
       return res.json({ success: false, error: 'API key is required' });
     }
+
+    // Clear other providers so getProvider() picks the right one
+    const allPrefixes = ['GEMINI', 'OPENAI', 'ANTHROPIC'];
+    for (const p of allPrefixes) {
+      if (p !== prefix) delete process.env[`${p}_API_KEY`];
+    }
+    delete process.env.OLLAMA_MODEL;
 
     // Store in process.env only (in-memory, not persisted to disk)
     process.env[`${prefix}_API_KEY`] = keyToUse;

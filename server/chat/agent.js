@@ -19,8 +19,9 @@ CRITICAL: A screenshot of the ACTUAL screen is attached. ALWAYS trust what you S
 RESPOND WITH ONLY a JSON object (no markdown):
 {
   "think": "describe what I ACTUALLY SEE in the screenshot, then my reasoning",
-  "action": "tap|type|swipe|press|launch|wait|done",
+  "action": "tap|type|swipe|drag|press|launch|wait|done",
   "coordinates": [x, y],
+  "endCoordinates": [x2, y2],
   "text": "text to type",
   "direction": "up|down|left|right",
   "key": "home|back|recent|enter|delete",
@@ -31,11 +32,14 @@ RESPOND WITH ONLY a JSON object (no markdown):
 Actions:
 - tap [x,y]: tap at coordinates. Use element "tap" field OR estimate from screenshot
 - type "text": type into the currently focused text field
-- swipe up/down/left/right: swipe screen in that direction
+- swipe up/down/left/right: swipe the whole screen in that direction (for scrolling)
+- drag [x,y] to [x2,y2]: drag/swipe from coordinates to endCoordinates (for moving items, sliders, game pieces)
 - press home/back/recent/enter/delete: press hardware/nav key
 - launch com.package.name: open an app
 - wait: pause and re-read screen
 - done: goal achieved
+
+IMPORTANT: Use "drag" (not tap or swipe) when you need to move something from one position to another (e.g., game pieces, sliders, drag-and-drop). Use "swipe" only for scrolling the screen.
 
 Rules:
 - LOOK AT THE SCREENSHOT FIRST. It shows the real screen. The elements list may be stale.
@@ -254,12 +258,16 @@ export class Agent {
           continue;
         }
 
+        console.log(`[Agent] Decision: action=${decision.action} coords=${JSON.stringify(decision.coordinates)} endCoords=${JSON.stringify(decision.endCoordinates)} dir=${decision.direction}`);
+
         this.onStep({
           type: 'decided',
           step: step + 1,
           think: decision.think,
           action: decision.action,
           reason: decision.reason,
+          coordinates: decision.coordinates,
+          endCoordinates: decision.endCoordinates,
         });
 
         // 3. ACT
@@ -440,6 +448,7 @@ export class Agent {
     switch (decision.action) {
       case 'tap': {
         const [x, y] = decision.coordinates || [0, 0];
+        console.log(`[Agent] Executing tap: (${x},${y})`);
         await shell(device, `input tap ${x} ${y}`);
         break;
       }
@@ -460,6 +469,13 @@ export class Agent {
           right: `${cx - d} ${cy} ${cx + d} ${cy}`,
         }[dir] || `${cx} ${cy + d} ${cx} ${cy - d}`;
         await shell(device, `input swipe ${coords} 300`);
+        break;
+      }
+      case 'drag': {
+        const [x1, y1] = decision.coordinates || [0, 0];
+        const [x2, y2] = decision.endCoordinates || decision.coordinates || [0, 0];
+        console.log(`[Agent] Executing drag: (${x1},${y1}) -> (${x2},${y2})`);
+        await shell(device, `input swipe ${x1} ${y1} ${x2} ${y2} 300`);
         break;
       }
       case 'press': {

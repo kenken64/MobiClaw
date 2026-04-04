@@ -12,6 +12,7 @@ import { ScrcpyInputHandler } from '../input/scrcpy-input.js';
 import { RtcSession } from '../webrtc/rtc-handler.js';
 import { CommandHandler } from '../chat/command-handler.js';
 import { Agent } from '../chat/agent.js';
+import { ManagerAgent } from '../chat/manager-agent.js';
 import { BenchmarkRunner } from '../chat/benchmark-runner.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -263,17 +264,32 @@ export function createWsHandler(server) {
             activeAgent = null;
           }
 
-          activeAgent = new Agent(serial, (stepData) => {
-            console.log('[Agent]', stepData.type, stepData.message || stepData.think || stepData.action || '');
-            // Rename stepData.type to stepType to avoid overwriting the WS message type
-            const { type: stepType, ...rest } = stepData;
-            sendJson(ws, { type: 'agent-step', stepType, ...rest });
-          });
+          // /simple prefix uses the flat single-loop agent (old behavior)
+          const useSimple = prompt.toLowerCase().startsWith('/simple ');
+          const agentGoal = useSimple ? prompt.slice(8).trim() : prompt;
+
+          if (useSimple) {
+            activeAgent = new Agent(serial, (stepData) => {
+              console.log('[Agent]', stepData.type, stepData.message || stepData.think || stepData.action || '');
+              const { type: stepType, ...rest } = stepData;
+              sendJson(ws, { type: 'agent-step', stepType, ...rest });
+            });
+          } else {
+            activeAgent = new ManagerAgent(serial, (eventData) => {
+              console.log('[Manager]', eventData.type, eventData.message || eventData.subGoal || eventData.analysis || '');
+              const { type: eventType, ...rest } = eventData;
+              sendJson(ws, { type: 'manager-event', eventType, ...rest });
+            });
+          }
 
           // Run agent in background (don't await - it streams via callback)
-          activeAgent.run(prompt).catch(err => {
+          activeAgent.run(agentGoal).catch(err => {
             console.error('[Agent] Fatal error:', err.message, err.stack);
-            sendJson(ws, { type: 'agent-step', stepType: 'error', message: err.message });
+            if (useSimple) {
+              sendJson(ws, { type: 'agent-step', stepType: 'error', message: err.message });
+            } else {
+              sendJson(ws, { type: 'manager-event', eventType: 'manager-error', message: err.message });
+            }
           }).finally(() => {
             activeAgent = null;
           });
@@ -283,9 +299,14 @@ export function createWsHandler(server) {
 
         case 'agent-stop': {
           if (activeAgent) {
+            const isManager = activeAgent instanceof ManagerAgent;
             activeAgent.stop();
             activeAgent = null;
-            sendJson(ws, { type: 'agent-step', stepType: 'stopped', message: 'Agent stopped' });
+            if (isManager) {
+              sendJson(ws, { type: 'manager-event', eventType: 'manager-done', message: 'Agent stopped by user' });
+            } else {
+              sendJson(ws, { type: 'agent-step', stepType: 'stopped', message: 'Agent stopped' });
+            }
           }
           break;
         }

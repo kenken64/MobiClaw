@@ -644,6 +644,55 @@ ws.on('agent-step', (msg) => {
   }
 });
 
+// --- Manager Agent events (hierarchical planning mode) ---
+ws.on('manager-event', (msg) => {
+  const t = msg.eventType;
+  switch (t) {
+    case 'manager-start':
+      agentRunning = true;
+      btnAgentStop.classList.remove('hidden');
+      updateSendButton();
+      addAgentStep('start', `Goal: "${msg.goal}" (planner mode, max ${msg.maxSubGoals} rounds, ${msg.provider || 'ai'})`);
+      break;
+    case 'manager-planning':
+      addAgentStep('perceive', `Round ${msg.round}: Planning...`);
+      break;
+    case 'manager-plan': {
+      addManagerPlan('', msg.subGoals || [], msg.analysis, msg.round);
+      break;
+    }
+    case 'manager-executing':
+      addAgentStep('action', `Executing sub-goal ${msg.subGoalIndex + 1}/${msg.totalSubGoals}: "${msg.subGoal}"`);
+      break;
+    case 'manager-subgoal-result': {
+      const icon = msg.status === 'done' ? 'done' : msg.status === 'error' ? 'error' : 'warn';
+      addAgentStep(icon, `Sub-goal "${msg.subGoal}" → ${msg.status}${msg.summary ? ': ' + msg.summary : ''}`);
+      break;
+    }
+    case 'manager-done':
+      addAgentStep('done', msg.message || 'Goal achieved!');
+      agentRunning = false;
+      btnAgentStop.classList.add('hidden');
+      updateSendButton();
+      break;
+    case 'manager-maxrounds':
+      addAgentStep('warn', msg.message);
+      agentRunning = false;
+      btnAgentStop.classList.add('hidden');
+      updateSendButton();
+      break;
+    case 'manager-error':
+      addAgentStep('error', msg.message);
+      break;
+    // Executor steps forwarded from within the manager
+    case 'executor-step':
+      handleExecutorStep(msg);
+      break;
+    default:
+      console.log('[Manager] Unknown event:', t, msg);
+  }
+});
+
 function sendChat() {
   // If agent is running, stop it
   if (agentRunning) {
@@ -801,6 +850,58 @@ function addAgentCandidateDebug(msg) {
   });
 
   addAgentStep('perceive', `${header}\n${lines.length ? lines.join('\n') : '- no candidates'}`);
+}
+
+function addManagerPlan(text, subGoals, analysis, round) {
+  const div = document.createElement('div');
+  div.className = 'chat-msg chat-msg-bot text-xs text-purple-300';
+  div.dataset.agentStep = 'true';
+
+  let html = `<span class="opacity-70">&#x1F4CB;</span> `;
+  if (subGoals.length > 0) {
+    html += `<strong>Round ${round || '?'} Plan (${subGoals.length} steps):</strong>`;
+    if (analysis) html += `<br><span class="text-muted-foreground">${escapeHtml(analysis)}</span>`;
+    html += '<br>';
+    subGoals.forEach((sg, i) => {
+      html += `<span class="text-muted-foreground ml-2">${i + 1}.</span> ${escapeHtml(sg)}<br>`;
+    });
+  } else {
+    html += escapeHtml(text);
+  }
+  div.innerHTML = html;
+  chatMessages.appendChild(div);
+  chatMessages.scrollTop = chatMessages.scrollHeight;
+}
+
+function handleExecutorStep(msg) {
+  const st = msg.stepType;
+  switch (st) {
+    case 'start':
+      // Sub-goal start — already shown by manager-executing
+      break;
+    case 'perceiving':
+      addAgentStep('perceive', `  Step ${msg.step}: Reading screen...`);
+      break;
+    case 'thinking':
+      updateLastStep(`  Step ${msg.step}: Thinking...`);
+      break;
+    case 'decided':
+      updateLastStep(`  Step ${msg.step}: ${msg.think}`);
+      addAgentStep('action', `  ${msg.action}${msg.reason ? ' — ' + msg.reason : ''}`);
+      break;
+    case 'acted':
+    case 'done':
+    case 'maxsteps':
+    case 'stopped':
+      // Handled at the manager level
+      break;
+    case 'stuck':
+      addAgentStep('warn', `  Screen unchanged for ${msg.count} steps`);
+      break;
+    case 'error':
+      addAgentStep('error', `  ${msg.message}`);
+      break;
+  }
 }
 
 function escapeHtml(text) {
