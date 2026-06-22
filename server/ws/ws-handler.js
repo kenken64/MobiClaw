@@ -19,6 +19,7 @@ import { getScript } from '../recording/artifact-store.js';
 import { ScriptRunner } from '../playback/script-runner.js';
 import { acquireMirrorWakeLock, releaseMirrorWakeLock } from '../adb/power-manager.js';
 import { clearVisionFrame, startVisionFrameFeed, stopVisionFrameFeed, updateVisionFrame } from '../stream/vision-frame-cache.js';
+import { requireWebSocketLaunchSession, verifyLaunchSession } from '../launch-auth.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const SCRCPY_SERVER_PATH = join(__dirname, '..', '..', 'scrcpy', 'scrcpy-server.jar');
@@ -27,7 +28,26 @@ const FRAME_PREFIX_PNG = 0x01;
 const FRAME_PREFIX_H264 = 0x02;
 
 export function createWsHandler(server) {
-  const wss = new WebSocketServer({ server });
+  const wss = new WebSocketServer({
+    server,
+    verifyClient: (info, done) => {
+      requireWebSocketLaunchSession(info.req)
+        .then((launchAuth) => {
+          if (!launchAuth.ok) {
+            console.warn('[WS] 2ndBrain launch auth failed:', launchAuth.error);
+            done(false, 401, '2ndBrain launch required');
+            return;
+          }
+
+          info.req.launchSession = launchAuth.session;
+          done(true);
+        })
+        .catch((err) => {
+          console.warn('[WS] 2ndBrain launch auth failed:', err.message);
+          done(false, 401, '2ndBrain launch required');
+        });
+    }
+  });
   const scrcpyAvailable = existsSync(SCRCPY_SERVER_PATH);
   if (scrcpyAvailable) {
     console.log('  Scrcpy server: available (H.264 mode enabled)');
@@ -35,11 +55,14 @@ export function createWsHandler(server) {
     console.log('  Scrcpy server: not found (run `npm run download-scrcpy` for H.264 mode)');
   }
 
-  wss.on('connection', (ws) => {
+  wss.on('connection', (ws, request) => {
     console.log('[WS] Client connected');
+    const launchSession = request.launchSession ?? null;
     let streamProvider = null;
     let inputHandler = null;
     let fpsInterval = null;
+    let launchCheckInterval = null;
+    let launchCheckRunning = false;
     let currentMode = null;
     let rtcSession = null;
     let commandHandler = null;
@@ -49,6 +72,29 @@ export function createWsHandler(server) {
     let activeRecorder = null;
     let activeRunOutcome = null;
     let currentSerial = null;
+
+    if (launchSession) {
+      launchCheckInterval = setInterval(async () => {
+        if (launchCheckRunning || ws.readyState !== ws.OPEN) {
+          return;
+        }
+
+        launchCheckRunning = true;
+
+        try {
+          await verifyLaunchSession(launchSession);
+        } catch (err) {
+          console.warn('[WS] 2ndBrain launch session expired:', err.message);
+          sendJson(ws, {
+            type: 'error',
+            message: '2ndBrain session has ended. Launch Mobile Device Operator again from 2ndBrain.'
+          });
+          ws.close(1008, '2ndBrain session expired');
+        } finally {
+          launchCheckRunning = false;
+        }
+      }, 15000);
+    }
 
     ws.on('message', async (data) => {
       try {
@@ -78,6 +124,10 @@ export function createWsHandler(server) {
       if (fpsInterval) {
         clearInterval(fpsInterval);
         fpsInterval = null;
+      }
+      if (launchCheckInterval) {
+        clearInterval(launchCheckInterval);
+        launchCheckInterval = null;
       }
       if (activeAgent) {
         activeAgent.stop();

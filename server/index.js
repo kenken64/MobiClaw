@@ -5,6 +5,7 @@ import { dirname, join } from 'path';
 import config from './config.js';
 import { listDevices, trackDevices } from './adb/adb-client.js';
 import { createWsHandler } from './ws/ws-handler.js';
+import { launchAuthRequired, launchLivenessRequired, requireLaunchSession, sessionStatus } from './launch-auth.js';
 import { createScriptFromRun, getReplay, getRun, getScript, listReplays, listRuns, listScripts } from './recording/artifact-store.js';
 
 // Prevent adbkit/Bluebird uncaught errors from crashing the server
@@ -20,6 +21,18 @@ const app = express();
 const server = createServer(app);
 
 app.use(express.json());
+
+app.get('/healthz', (req, res) => {
+  res.json({
+    launchAuthRequired: launchAuthRequired(),
+    launchLivenessRequired: launchLivenessRequired(),
+    ok: true,
+  });
+});
+
+app.get('/api/session', sessionStatus);
+
+app.use(requireLaunchSession);
 
 // Landing page at /
 app.get('/', (req, res) => {

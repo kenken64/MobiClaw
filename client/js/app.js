@@ -91,6 +91,9 @@ let replayRunning = false;
 let currentRunDetail = null;
 let currentReplayDetail = null;
 let wifiConnectionTarget = null;
+let authExpired = false;
+let authCheckTimer = null;
+const authCheckIntervalMs = 15000;
 
 function isWirelessSerial(serial) {
   return typeof serial === 'string' && (serial.includes(':') || serial.includes('_adb-tls-connect._tcp'));
@@ -167,6 +170,63 @@ function setPreferredMode(mode) {
   if (target && !target.disabled) {
     target.checked = true;
   }
+}
+
+function showLaunchExpired(message = 'This Mobile Device Operator session is no longer active. Launch it again from 2ndBrain.') {
+  if (authExpired) {
+    return;
+  }
+
+  authExpired = true;
+
+  if (authCheckTimer) {
+    clearInterval(authCheckTimer);
+    authCheckTimer = null;
+  }
+
+  try {
+    ws.disconnect();
+  } catch {}
+
+  document.body.className = 'auth-expired-body';
+  document.body.innerHTML = `
+    <main class="auth-expired-panel">
+      <strong>2ndBrain launch auth</strong>
+      <h1>Launch required</h1>
+      <p>${escapeHtml(message)}</p>
+    </main>
+  `;
+}
+
+async function checkLaunchSession() {
+  if (authExpired) {
+    return;
+  }
+
+  try {
+    const response = await fetch('/api/session', { cache: 'no-store' });
+
+    if (response.status !== 401) {
+      return;
+    }
+
+    let payload = null;
+
+    try {
+      payload = await response.json();
+    } catch {
+      payload = null;
+    }
+
+    showLaunchExpired(payload?.error || undefined);
+  } catch {
+    // Local frontend-only development does not expose the production auth endpoint.
+  }
+}
+
+function startLaunchSessionChecks() {
+  checkLaunchSession();
+  authCheckTimer = window.setInterval(checkLaunchSession, authCheckIntervalMs);
 }
 
 // --- WebSocket Events ---
@@ -1568,4 +1628,5 @@ updatePlaybackControls();
 refreshRunList();
 refreshScriptList();
 refreshReplayList();
+startLaunchSessionChecks();
 ws.connect();

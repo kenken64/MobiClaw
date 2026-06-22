@@ -94,6 +94,12 @@ cp .env.example .env
 PORT=3000
 # ADB_PATH=/path/to/adb   # optional — auto-detected if adb is in PATH
 
+# 2ndBrain marketplace launch auth for production:
+# MOBILE_DEVICE_OPERATOR_SESSION_SECRET=use-the-same-32-byte-minimum-secret-configured-in-2ndbrain
+# MOBILE_DEVICE_OPERATOR_TOOL_ID=mobile-device-operator
+# MARKETPLACE_LAUNCH_VERIFY_URL=https://your-2ndbrain-domain/api/marketplace/launch-session/verify
+# MARKETPLACE_LAUNCH_VERIFY_SECRET=use-the-same-secret-configured-in-2ndbrain
+
 # Set ONE of these (priority: Gemini > OpenAI > Anthropic > Ollama):
 GEMINI_API_KEY=your-key-here
 # OPENAI_API_KEY=sk-...
@@ -103,6 +109,8 @@ GEMINI_API_KEY=your-key-here
 ```
 
 You can also set API keys directly from the browser UI — they are saved to localStorage and used automatically.
+
+`MOBILE_DEVICE_OPERATOR_SESSION_SECRET` enables 2ndBrain launch auth. Use the same value in `2ndBrain.ceo` so marketplace launches can sign short-lived tokens for this app. When `MARKETPLACE_LAUNCH_VERIFY_URL` and `MARKETPLACE_LAUNCH_VERIFY_SECRET` are set, open mobiClaw sessions are checked against 2ndBrain and lock after the user logs out or the installed workflow is disabled.
 
 ### Run
 
