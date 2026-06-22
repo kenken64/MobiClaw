@@ -57,6 +57,7 @@ The AI agent uses a **perception -> reasoning -> action** loop:
 - **Navigation** - Back, Home, Recent, Volume, Power buttons
 - **Recording & Download** - Record mirrored screen in-browser and download `.webm`
 - **Wireless ADB** - Connect and pair devices from the browser UI
+- **Browser USB ADB** - Connect directly from Chrome/Edge using WebUSB when the server cannot access your plugged-in phone
 - **Auto-Reconnect** - Stream auto-restarts on disconnect
 - **Stop Agent** - Cancel in-flight LLM requests and pending ADB actions instantly
 - **Direct Commands** - `/swipe up`, `/open settings`, `/help` with `/` prefix
@@ -121,6 +122,8 @@ npm start
 
 Open **http://localhost:3000** in Chrome/Edge.
 
+For a phone plugged into the browser machine, use **Browser USB ADB** in the sidebar. This path talks to the Android device through WebUSB, so it works even when the Node server cannot see local USB devices. WebUSB requires Chrome/Edge on `https://` or `localhost`, USB debugging enabled, and approval of the Android RSA debugging prompt.
+
 ## Usage
 
 ### Screen Mirroring
@@ -130,6 +133,8 @@ Open **http://localhost:3000** in Chrome/Edge.
 3. Click **Start Mirror**
 4. Click/drag on the screen to tap/swipe the phone
 5. Use **Recording** panel: Start -> Stop -> Download video
+
+For **Browser USB ADB** devices, MobiClaw uses browser-side PNG screencap polling and direct ADB input commands. AI agent and replay workflows still require the server-side ADB/Wireless ADB transport because the server performs perception, planning, and replay artifact capture.
 
 ### AI Agent
 
@@ -299,6 +304,7 @@ client/
 
 - **Backend**: Node.js, Express, ws, werift
 - **ADB**: @devicefarmer/adbkit + CLI
+- **Browser ADB**: Tango ADB WebUSB packages
 - **Streaming**: scrcpy-server v3.3.4
 - **AI**: @google/genai, openai, @anthropic-ai/sdk
 - **Frontend**: Tailwind CSS, Lucide Icons, WebCodecs API

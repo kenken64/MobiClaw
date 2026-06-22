@@ -3,6 +3,7 @@ import { PngRenderer } from './renderers/png-renderer.js';
 import { H264Renderer } from './renderers/h264-renderer.js';
 import { WebrtcRenderer } from './renderers/webrtc-renderer.js';
 import { TouchHandler } from './input/touch-handler.js';
+import { WebUsbAdbBridge } from './webusb-adb-bundle.js';
 
 // DOM elements
 const deviceSelect = document.getElementById('device-select');
@@ -20,6 +21,8 @@ const statusMode = document.getElementById('status-mode');
 const connectHost = document.getElementById('connect-host');
 const connectPort = document.getElementById('connect-port');
 const btnWifiConnect = document.getElementById('btn-wifi-connect');
+const btnWebUsbConnect = document.getElementById('btn-webusb-connect');
+const webUsbStatus = document.getElementById('webusb-status');
 const pairHost = document.getElementById('pair-host');
 const pairPort = document.getElementById('pair-port');
 const pairCode = document.getElementById('pair-code');
@@ -91,9 +94,13 @@ let replayRunning = false;
 let currentRunDetail = null;
 let currentReplayDetail = null;
 let wifiConnectionTarget = null;
+let latestServerDevices = [];
+let webUsbDeviceOption = null;
+let webUsbStreaming = false;
 let authExpired = false;
 let authCheckTimer = null;
 const authCheckIntervalMs = 15000;
+const WEBUSB_PREFIX = 'webusb:';
 
 function isWirelessSerial(serial) {
   return typeof serial === 'string' && (serial.includes(':') || serial.includes('_adb-tls-connect._tcp'));
@@ -155,10 +162,24 @@ webrtcRenderer.onDimensionsChange = setShellOrientation;
 resetShellOrientation();
 
 // Initialize
+const webUsbAdb = new WebUsbAdbBridge();
 const ws = new WsClient();
+webUsbAdb.onDisconnect = () => {
+  const wasSelected = isWebUsbDevice();
+  if (streaming && wasSelected) {
+    setStoppedUi('no-device', 'No device');
+  }
+  webUsbDeviceOption = null;
+  btnWebUsbConnect.textContent = 'Connect USB Device';
+  setWebUsbStatus(false, 'Browser USB device disconnected.');
+  renderDeviceList();
+  if (wasSelected) {
+    resetSelectedDeviceState();
+  }
+};
 // Touch handler works on both canvas and video element
-const touchCanvas = new TouchHandler(canvas, (msg) => ws.send(msg));
-const touchVideo = new TouchHandler(videoEl, (msg) => ws.send(msg));
+const touchCanvas = new TouchHandler(canvas, routeInputMessage);
+const touchVideo = new TouchHandler(videoEl, routeInputMessage);
 
 function getSelectedMode() {
   const checked = document.querySelector('input[name="mode"]:checked');
@@ -170,6 +191,172 @@ function setPreferredMode(mode) {
   if (target && !target.disabled) {
     target.checked = true;
   }
+}
+
+function webUsbSerial(info = webUsbDeviceOption) {
+  return info?.serial ? `${WEBUSB_PREFIX}${info.serial}` : '';
+}
+
+function isWebUsbDevice(serial = selectedDevice) {
+  return typeof serial === 'string' && serial.startsWith(WEBUSB_PREFIX);
+}
+
+function displaySerial(serial) {
+  return serial.length > 28 ? serial.substring(0, 25) + '...' : serial;
+}
+
+function renderDeviceList() {
+  const previousSelectedDevice = selectedDevice;
+  const serverDevices = latestServerDevices;
+  const allDevices = [...serverDevices];
+
+  if (webUsbDeviceOption) {
+    allDevices.push({
+      serial: webUsbSerial(),
+      title: `${webUsbDeviceOption.model || 'Android device'} (${webUsbDeviceOption.serial})`,
+      type: 'webusb'
+    });
+  }
+
+  deviceSelect.innerHTML = '<option value="">Select device...</option>';
+  allDevices.forEach((device) => {
+    const opt = document.createElement('option');
+    opt.value = device.serial;
+    opt.textContent = device.type === 'webusb' ? `USB: ${displaySerial(device.title || device.serial)}` : displaySerial(device.serial);
+    opt.title = device.title || device.serial;
+    deviceSelect.appendChild(opt);
+  });
+
+  const reboundWirelessDevice = findBestWirelessDevice(serverDevices);
+  if (reboundWirelessDevice) {
+    wifiConnectedSerial = reboundWirelessDevice.serial;
+  }
+
+  if (allDevices.length === 0) {
+    if (!selectedDevice) setStatus('no-device', 'No device');
+  } else if (previousSelectedDevice && allDevices.find((device) => device.serial === previousSelectedDevice)) {
+    deviceSelect.value = previousSelectedDevice;
+  } else if (serverDevices.length === 1 && !webUsbDeviceOption) {
+    deviceSelect.value = serverDevices[0].serial;
+    deviceSelect.dispatchEvent(new Event('change'));
+  } else if (reboundWirelessDevice) {
+    deviceSelect.value = reboundWirelessDevice.serial;
+    if (selectedDevice !== reboundWirelessDevice.serial) {
+      deviceSelect.dispatchEvent(new Event('change'));
+    }
+  } else if (webUsbDeviceOption && !previousSelectedDevice) {
+    deviceSelect.value = webUsbSerial();
+    deviceSelect.dispatchEvent(new Event('change'));
+  }
+
+  if (wifiConnectedSerial && !findBestWirelessDevice(serverDevices)) {
+    wifiConnectedSerial = null;
+    wifiConnectionTarget = null;
+    updateWifiButton();
+  } else if (wifiConnectedSerial) {
+    updateWifiButton();
+  }
+
+  if (selectedDevice && !allDevices.find((device) => device.serial === selectedDevice)) {
+    if (reboundWirelessDevice) {
+      selectedDevice = reboundWirelessDevice.serial;
+      deviceSelect.value = reboundWirelessDevice.serial;
+      return;
+    }
+    resetSelectedDeviceState();
+  }
+}
+
+function resetSelectedDeviceState() {
+  selectedDevice = null;
+  btnConnect.disabled = true;
+  btnDeviceInfo.classList.add('hidden');
+  deviceInfoDialog.classList.add('hidden');
+  if (streaming) {
+    setStoppedUi('no-device', 'No device');
+  }
+  setStatus('no-device', 'No device');
+}
+
+function routeInputMessage(message) {
+  if (isWebUsbDevice()) {
+    webUsbAdb.handleInputMessage(message).catch((err) => {
+      setPlaybackStatus(err.message, true);
+    });
+    return;
+  }
+
+  ws.send(message);
+}
+
+function setWebUsbStatus(success, message) {
+  webUsbStatus.textContent = message;
+  webUsbStatus.className = 'text-xs min-h-[16px] ' +
+    (success === true ? 'text-emerald-400' :
+     success === false ? 'text-red-400' :
+     'text-muted-foreground');
+}
+
+function initializeWebUsbControls() {
+  if (webUsbAdb.supported) {
+    setWebUsbStatus(null, 'Ready for browser USB ADB.');
+    return;
+  }
+
+  btnWebUsbConnect.disabled = true;
+  btnWebUsbConnect.classList.add('opacity-40', 'cursor-not-allowed');
+  setWebUsbStatus(false, 'WebUSB ADB requires Chrome/Edge on HTTPS or localhost.');
+}
+
+function setDeviceInfoFields(d) {
+  document.getElementById('info-model').textContent = d.model;
+  document.getElementById('info-brand').textContent = d.brand;
+  document.getElementById('info-android').textContent = `${d.androidVersion} (SDK ${d.sdkVersion})`;
+  document.getElementById('info-resolution').textContent = `${d.width}x${d.height} @${d.dpi}dpi`;
+  document.getElementById('info-battery').textContent =
+    `${d.batteryLevel}%${d.charging ? ' (charging)' : ''}`;
+  document.getElementById('dialog-model').textContent = d.model;
+  document.getElementById('dialog-brand').textContent = d.brand;
+  document.getElementById('dialog-android').textContent = `${d.androidVersion} (SDK ${d.sdkVersion})`;
+  document.getElementById('dialog-resolution').textContent = `${d.width}x${d.height} @${d.dpi}dpi`;
+  document.getElementById('dialog-battery').textContent =
+    `${d.batteryLevel}%${d.charging ? ' (charging)' : ''}`;
+  btnDeviceInfo.classList.remove('hidden');
+}
+
+function setStreamingUi(mode, label, renderer) {
+  streaming = true;
+  currentStreamMode = mode;
+  updateSendButton();
+  updateRecordingControls();
+  btnConnect.textContent = 'Stop Mirror';
+  btnConnect.classList.remove('bg-emerald-600', 'hover:bg-emerald-700');
+  btnConnect.classList.add('bg-red-600', 'hover:bg-red-700');
+  placeholder.classList.add('hidden');
+  setStatus('streaming', 'Streaming');
+  statusMode.textContent = label;
+  canvas.classList.add('active');
+  activeRenderer = renderer;
+  touch.mode = 'simple';
+}
+
+function setStoppedUi(statusState = 'connected', statusLabel = 'Connected') {
+  streaming = false;
+  currentStreamMode = null;
+  webUsbStreaming = false;
+  updateSendButton();
+  updateRecordingControls();
+  btnConnect.textContent = 'Start Mirror';
+  btnConnect.classList.remove('bg-red-600', 'hover:bg-red-700');
+  btnConnect.classList.add('bg-emerald-600', 'hover:bg-emerald-700');
+  hideAllScreens();
+  placeholder.classList.remove('hidden');
+  setStatus(statusState, statusLabel);
+  statusFps.textContent = '0';
+  statusMode.textContent = '--';
+  activeRenderer = null;
+  webrtcRenderer.close();
+  resetShellOrientation();
 }
 
 function showLaunchExpired(message = 'This Mobile Device Operator session is no longer active. Launch it again from 2ndBrain.') {
@@ -300,91 +487,12 @@ ws.on('capabilities', (msg) => {
 });
 
 ws.on('device-list', (msg) => {
-  const previousSelectedDevice = selectedDevice;
-  deviceSelect.innerHTML = '<option value="">Select device...</option>';
-  msg.devices.forEach(d => {
-    const opt = document.createElement('option');
-    opt.value = d.serial;
-    // Truncate long serial names for display
-    opt.textContent = d.serial.length > 28 ? d.serial.substring(0, 25) + '...' : d.serial;
-    opt.title = d.serial; // Full name on hover
-    deviceSelect.appendChild(opt);
-  });
-
-  const reboundWirelessDevice = findBestWirelessDevice(msg.devices);
-  if (reboundWirelessDevice) {
-    wifiConnectedSerial = reboundWirelessDevice.serial;
-  }
-
-  if (msg.devices.length === 0) {
-    if (!selectedDevice) setStatus('no-device', 'No device');
-  } else if (msg.devices.length === 1) {
-    deviceSelect.value = msg.devices[0].serial;
-    deviceSelect.dispatchEvent(new Event('change'));
-  } else if (previousSelectedDevice && msg.devices.find(d => d.serial === previousSelectedDevice)) {
-    deviceSelect.value = previousSelectedDevice;
-  } else if (reboundWirelessDevice) {
-    deviceSelect.value = reboundWirelessDevice.serial;
-    if (selectedDevice !== reboundWirelessDevice.serial) {
-      deviceSelect.dispatchEvent(new Event('change'));
-    }
-  }
-
-  // If wifi device is gone, reset wifi button only when no matching wireless transport remains.
-  if (wifiConnectedSerial && !findBestWirelessDevice(msg.devices)) {
-    wifiConnectedSerial = null;
-    wifiConnectionTarget = null;
-    updateWifiButton();
-  } else if (wifiConnectedSerial) {
-    updateWifiButton();
-  }
-
-  // If selected device was disconnected, reset UI
-  if (selectedDevice && !msg.devices.find(d => d.serial === selectedDevice)) {
-    if (reboundWirelessDevice) {
-      selectedDevice = reboundWirelessDevice.serial;
-      deviceSelect.value = reboundWirelessDevice.serial;
-      return;
-    }
-    selectedDevice = null;
-    btnConnect.disabled = true;
-    btnDeviceInfo.classList.add('hidden');
-    deviceInfoDialog.classList.add('hidden');
-    if (streaming) {
-      streaming = false;
-      currentStreamMode = null;
-      btnConnect.textContent = 'Start Mirror';
-      btnConnect.classList.remove('bg-red-600', 'hover:bg-red-700');
-      btnConnect.classList.add('bg-emerald-600', 'hover:bg-emerald-700');
-      hideAllScreens();
-      placeholder.classList.remove('hidden');
-      statusFps.textContent = '0';
-      statusMode.textContent = '--';
-      activeRenderer = null;
-      webrtcRenderer.close();
-    }
-    setStatus('no-device', 'No device');
-  }
+  latestServerDevices = msg.devices || [];
+  renderDeviceList();
 });
 
 ws.on('device-info', (msg) => {
-  const d = msg.data;
-  // Store in hidden holder
-  document.getElementById('info-model').textContent = d.model;
-  document.getElementById('info-brand').textContent = d.brand;
-  document.getElementById('info-android').textContent = `${d.androidVersion} (SDK ${d.sdkVersion})`;
-  document.getElementById('info-resolution').textContent = `${d.width}x${d.height} @${d.dpi}dpi`;
-  document.getElementById('info-battery').textContent =
-    `${d.batteryLevel}%${d.charging ? ' (charging)' : ''}`;
-  // Also populate dialog
-  document.getElementById('dialog-model').textContent = d.model;
-  document.getElementById('dialog-brand').textContent = d.brand;
-  document.getElementById('dialog-android').textContent = `${d.androidVersion} (SDK ${d.sdkVersion})`;
-  document.getElementById('dialog-resolution').textContent = `${d.width}x${d.height} @${d.dpi}dpi`;
-  document.getElementById('dialog-battery').textContent =
-    `${d.batteryLevel}%${d.charging ? ' (charging)' : ''}`;
-  // Show info button
-  btnDeviceInfo.classList.remove('hidden');
+  setDeviceInfoFields(msg.data);
 });
 
 ws.on('stream-started', (msg) => {
@@ -561,7 +669,12 @@ deviceSelect.addEventListener('change', () => {
 
   if (selectedDevice) {
     setStatus('connected', 'Connected');
-    ws.send({ type: 'get-device-info', device: selectedDevice });
+    if (isWebUsbDevice()) {
+      setPreferredMode('screencap');
+      setDeviceInfoFields(webUsbDeviceOption);
+    } else {
+      ws.send({ type: 'get-device-info', device: selectedDevice });
+    }
   } else {
     setStatus('no-device', 'No device');
     infoPanel.classList.add('hidden');
@@ -584,17 +697,25 @@ btnConnect.addEventListener('click', () => {
   if (!selectedDevice) return;
 
   if (streaming) {
-    ws.send({ type: 'stop-stream' });
+    if (isWebUsbDevice()) {
+      stopWebUsbMirror();
+    } else {
+      ws.send({ type: 'stop-stream' });
+    }
   } else {
-    const mode = getSelectedMode();
-    ws.send({ type: 'start-stream', device: selectedDevice, mode });
+    if (isWebUsbDevice()) {
+      startWebUsbMirror();
+    } else {
+      const mode = getSelectedMode();
+      ws.send({ type: 'start-stream', device: selectedDevice, mode });
+    }
   }
 });
 
 document.querySelectorAll('.btn-key').forEach(btn => {
   btn.addEventListener('click', () => {
     const keycode = parseInt(btn.dataset.keycode, 10);
-    ws.send({ type: 'key', keycode });
+    routeInputMessage({ type: 'key', keycode });
   });
 });
 
@@ -630,6 +751,78 @@ btnPair.addEventListener('click', () => {
   showWifiStatus(null, 'Pairing...');
   ws.send({ type: 'wifi-pair', host, port, code });
 });
+
+btnWebUsbConnect.addEventListener('click', async () => {
+  if (webUsbAdb.connected) {
+    try {
+      if (streaming && isWebUsbDevice()) {
+        stopWebUsbMirror();
+      }
+      await webUsbAdb.disconnect();
+      webUsbDeviceOption = null;
+      btnWebUsbConnect.textContent = 'Connect USB Device';
+      setWebUsbStatus(null, 'USB device disconnected.');
+      renderDeviceList();
+      if (isWebUsbDevice()) {
+        resetSelectedDeviceState();
+      }
+    } catch (err) {
+      setWebUsbStatus(false, err.message);
+    }
+    return;
+  }
+
+  try {
+    setWebUsbStatus(null, 'Waiting for browser USB device selection...');
+    const info = await webUsbAdb.connect();
+    webUsbDeviceOption = info;
+    btnWebUsbConnect.textContent = 'Disconnect USB Device';
+    setWebUsbStatus(true, `Connected ${info.model || 'Android device'} through browser USB.`);
+    renderDeviceList();
+    deviceSelect.value = webUsbSerial(info);
+    deviceSelect.dispatchEvent(new Event('change'));
+  } catch (err) {
+    setWebUsbStatus(false, err.message);
+  }
+});
+
+function startWebUsbMirror() {
+  if (!webUsbAdb.connected) {
+    setWebUsbStatus(false, 'Connect a browser USB device first.');
+    return;
+  }
+
+  try {
+    webUsbStreaming = true;
+    setStreamingUi('webusb', 'USB PNG', pngRenderer);
+    webUsbAdb.startScreenStream({
+      onError: (err) => setWebUsbStatus(false, err.message),
+      onFps: (fps) => {
+        if (webUsbStreaming) {
+          statusFps.textContent = String(fps);
+        }
+      },
+      onFrame: (png) => {
+        if (!webUsbStreaming) return;
+        const frame = new Uint8Array(png.byteLength + 1);
+        frame[0] = 0x01;
+        frame.set(png, 1);
+        pngRenderer.renderFrame(frame.buffer);
+      }
+    });
+    setWebUsbStatus(true, 'Browser USB mirror running.');
+  } catch (err) {
+    setWebUsbStatus(false, err.message);
+    setStoppedUi('connected', 'Connected');
+  }
+}
+
+function stopWebUsbMirror() {
+  webUsbStreaming = false;
+  webUsbAdb.stopScreenStream();
+  setStoppedUi('connected', 'Connected');
+  setWebUsbStatus(webUsbAdb.connected ? true : null, webUsbAdb.connected ? 'Browser USB mirror stopped.' : '');
+}
 
 // --- Helpers ---
 
@@ -737,7 +930,7 @@ function setPlaybackStatus(text, isError = false) {
 function updatePlaybackControls() {
   btnViewRun.disabled = !runSelect.value;
   btnSaveScript.disabled = !runSelect.value;
-  btnReplayScript.disabled = !scriptSelect.value || !selectedDevice || replayRunning;
+  btnReplayScript.disabled = !scriptSelect.value || !selectedDevice || replayRunning || isWebUsbDevice();
   btnReplayStop.disabled = !replayRunning;
   btnViewReplay.disabled = !replaySelect.value;
 }
@@ -1267,6 +1460,19 @@ function downloadRecording() {
   document.body.removeChild(a);
 }
 
+function downloadWebUsbScreenshot(pngBytes) {
+  const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+  const blob = new Blob([pngBytes], { type: 'image/png' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `mobiclaw-webusb-screenshot-${stamp}.png`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
 function showWifiStatus(success, message) {
   wifiStatus.textContent = message;
   wifiStatus.className = 'text-xs min-h-[16px] ' +
@@ -1389,7 +1595,9 @@ ws.on('manager-event', (msg) => {
 function sendChat() {
   // If agent is running, stop it
   if (agentRunning) {
-    ws.send({ type: 'agent-stop' });
+    if (!isWebUsbDevice()) {
+      ws.send({ type: 'agent-stop' });
+    }
     agentRunning = false;
     updateSendButton();
     return;
@@ -1398,13 +1606,38 @@ function sendChat() {
   const text = chatInput.value.trim();
   if (!text || !selectedDevice) return;
   addChatMessage(text, 'user');
-  ws.send({ type: 'chat', device: selectedDevice, prompt: text });
   chatInput.value = '';
+
+  if (isWebUsbDevice()) {
+    sendWebUsbChat(text);
+    return;
+  }
+
+  ws.send({ type: 'chat', device: selectedDevice, prompt: text });
 
   // Immediately show stop button if it's not a / command
   if (!text.startsWith('/') && text !== 'help' && text !== '?') {
     agentRunning = true;
     updateSendButton();
+  }
+}
+
+async function sendWebUsbChat(text) {
+  try {
+    if (!text.startsWith('/') && text !== 'help' && text !== '?') {
+      addChatMessage('WebUSB mode supports direct slash commands and manual controls. Use /help for available commands, or use a server/Wireless ADB device for AI agent mode.', 'bot', true);
+      return;
+    }
+
+    const result = await webUsbAdb.runDirectCommand(text);
+
+    if (result?.png) {
+      downloadWebUsbScreenshot(result.png);
+    }
+
+    addChatMessage(result?.message || '(done)', 'bot', Boolean(result?.error));
+  } catch (err) {
+    addChatMessage(err.message, 'bot', true);
   }
 }
 
@@ -1430,7 +1663,7 @@ function updateSendButton() {
     btnChatSend.title = 'Stop agent';
   } else {
     chatInput.disabled = false;
-    chatInput.placeholder = 'Tell the AI what to do...';
+    chatInput.placeholder = isWebUsbDevice() ? 'Type /help for WebUSB commands...' : 'Tell the AI what to do...';
     btnChatSend.disabled = false;
     btnChatSend.classList.remove('bg-red-600', 'hover:bg-red-700', 'opacity-40', 'cursor-not-allowed');
     btnChatSend.classList.add('bg-purple-600', 'hover:bg-purple-700');
@@ -1445,6 +1678,12 @@ chatInput.addEventListener('keydown', (e) => {
 });
 
 btnChatHelp.addEventListener('click', () => {
+  if (isWebUsbDevice()) {
+    addChatMessage('/help', 'user');
+    sendWebUsbChat('/help');
+    return;
+  }
+
   ws.send({ type: 'chat', device: selectedDevice || '_', prompt: '/help' });
 });
 
@@ -1629,4 +1868,5 @@ refreshRunList();
 refreshScriptList();
 refreshReplayList();
 startLaunchSessionChecks();
+initializeWebUsbControls();
 ws.connect();

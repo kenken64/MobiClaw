@@ -5,6 +5,7 @@
   "type": "module",
   "main": "server/index.js",
   "scripts": {
+    "build:webusb": "esbuild client/js/webusb-adb-source.js --bundle --format=esm --target=es2022 --outfile=client/js/webusb-adb-bundle.js",
     "start": "node server/index.js",
     "dev": "node --watch server/index.js",
     "download-scrcpy": "node scripts/download-scrcpy-server.js",
@@ -14,10 +15,16 @@
     "@anthropic-ai/sdk": "^0.80.0",
     "@devicefarmer/adbkit": "^3.3.8",
     "@google/genai": "^1.47.0",
+    "@yume-chan/adb": "^2.6.0",
+    "@yume-chan/adb-credential-web": "^2.1.0",
+    "@yume-chan/adb-daemon-webusb": "^2.3.2",
     "dotenv": "^16.4.7",
     "express": "^5.1.0",
     "openai": "^6.33.0",
     "werift": "^0.22.9",
     "ws": "^8.18.1"
+  },
+  "devDependencies": {
+    "esbuild": "^0.25.12"
   }
 }
